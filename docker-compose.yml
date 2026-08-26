@@ -1,0 +1,16 @@
+services:
+  contact-sync:
+    build: .
+    environment:
+      PORT: "8080"
+      TEXT_BASIC_AUTH: ${TEXT_BASIC_AUTH:?set TEXT_BASIC_AUTH in .env}
+      TEXT_WEBHOOK_SECRET: ${TEXT_WEBHOOK_SECRET:?set TEXT_WEBHOOK_SECRET in .env}
+      HUBSPOT_ACCESS_TOKEN: ${HUBSPOT_ACCESS_TOKEN:?set HUBSPOT_ACCESS_TOKEN in .env}
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
