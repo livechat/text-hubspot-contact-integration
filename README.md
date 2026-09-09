@@ -23,14 +23,15 @@ A healthy service returns HTTP `204`.
 
 ## Configuration
 
-| Variable               | Used by                          | Description                                                             |
-| ---------------------- | -------------------------------- | ----------------------------------------------------------------------- |
-| `TEXT_BASIC_AUTH`      | Service and webhook registration | Base64-encoded `account_id:personal_access_token` credential from Text. |
-| `TEXT_WEBHOOK_SECRET`  | Service and webhook registration | Shared secret checked on every Text webhook delivery.                   |
-| `HUBSPOT_ACCESS_TOKEN` | Service                          | HubSpot private app access token.                                       |
-| `TEXT_OWNER_CLIENT_ID` | Webhook registration             | Text OAuth client ID that owns the webhook.                             |
-| `WEBHOOK_PUBLIC_URL`   | Webhook registration             | Public HTTPS address for the service, without a trailing slash.         |
-| `HOST_PORT`            | Service                          | Local port mapped to the service container. Defaults to `8080`.         |
+| Variable                       | Used by                          | Description                                                             |
+| ------------------------------ | -------------------------------- | ----------------------------------------------------------------------- |
+| `TEXT_BASIC_AUTH`              | Service and webhook registration | Base64-encoded `account_id:personal_access_token` credential from Text. |
+| `TEXT_WEBHOOK_SECRET`          | Service and webhook registration | Shared secret checked on every Text webhook delivery.                   |
+| `HUBSPOT_ACCESS_TOKEN`         | Service                          | HubSpot private app access token.                                       |
+| `TEXT_OWNER_CLIENT_ID`         | Webhook registration             | Text OAuth client ID that owns the webhook.                             |
+| `WEBHOOK_PUBLIC_URL`           | Webhook registration             | Public HTTPS address for the service, without a trailing slash.         |
+| `HOST_PORT`                    | Service                          | Local port mapped to the service container. Defaults to `8080`.         |
+| `TEXT_TO_HUBSPOT_PROPERTY_MAP` | Service                          | JSON map from a Text customer-property name to a manually created HubSpot contact-property internal name. Unmapped Text properties are skipped. |
 
 ---
 

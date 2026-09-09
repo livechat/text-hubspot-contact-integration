@@ -1,8 +1,10 @@
 package contactsync
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
@@ -24,6 +26,11 @@ type textClient interface {
 	RequestThreadSummary(context.Context, string, string) error
 }
 
+type cdpClient interface {
+	GetCustomer(context.Context, string) (textapi.CustomerData, error)
+	GetCustomerPropertyDefinitions(context.Context) ([]textapi.CustomerPropertyDefinition, error)
+}
+
 type hubSpotClient interface {
 	UpsertContact(context.Context, hubspot.ContactInput) (string, error)
 	CreateNote(context.Context, string, string, time.Time) error
@@ -31,8 +38,9 @@ type hubSpotClient interface {
 
 type Service struct {
 	textClient         textClient
+	cdpClient          cdpClient
 	hubSpotClient      hubSpotClient
-	now                func() time.Time
+	propertyMap        map[string]string
 	pollInterval       time.Duration
 	pollRequestTimeout time.Duration
 	pollTimeout        time.Duration
@@ -44,11 +52,12 @@ type Result struct {
 	SkipReason  string
 }
 
-func New(textClient textClient, hubSpotClient hubSpotClient) *Service {
+func New(textClient textClient, cdpClient cdpClient, hubSpotClient hubSpotClient, propertyMap map[string]string) *Service {
 	return &Service{
 		textClient:         textClient,
+		cdpClient:          cdpClient,
 		hubSpotClient:      hubSpotClient,
-		now:                time.Now,
+		propertyMap:        propertyMap,
 		pollInterval:       defaultSummaryPollInterval,
 		pollRequestTimeout: defaultSummaryPollRequestTimeout,
 		pollTimeout:        defaultSummaryPollTimeout,
@@ -75,6 +84,20 @@ func (service *Service) SyncThread(ctx context.Context, chatID, threadID string)
 		return Result{SkipReason: "customer has no email"}, nil
 	}
 
+	customerData, err := service.cdpClient.GetCustomer(ctx, customerID)
+	if err != nil {
+		return Result{}, fmt.Errorf("get Text customer data: %w", err)
+	}
+	propertyDefinitions, err := service.cdpClient.GetCustomerPropertyDefinitions(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("get Text customer property definitions: %w", err)
+	}
+	customProperties, err := customProperties(customerData.CustomerProperties, propertyDefinitions, service.propertyMap)
+	if err != nil {
+		return Result{}, err
+	}
+	contact.CustomProperties = customProperties
+
 	chat, err = service.waitForSummary(ctx, chatID, threadID, chat)
 	if err != nil {
 		return Result{}, err
@@ -87,7 +110,7 @@ func (service *Service) SyncThread(ctx context.Context, chatID, threadID string)
 
 	timestamp := chat.Thread.Summary.UpdatedAt
 	if timestamp.IsZero() {
-		timestamp = service.now()
+		timestamp = time.Now()
 	}
 
 	if err := service.hubSpotClient.CreateNote(
@@ -178,6 +201,76 @@ func contactInput(customer textapi.Customer) (hubspot.ContactInput, bool) {
 		FirstName: firstName,
 		LastName:  lastName,
 	}, true
+}
+
+func customProperties(values map[string]textapi.CustomerPropertyValue, definitions []textapi.CustomerPropertyDefinition, mapping map[string]string) (map[string]string, error) {
+	definitionNames := make(map[string]string, len(definitions))
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Name)
+		if definition.ID == "" || name == "" {
+			continue
+		}
+
+		if _, exists := definitionNames[definition.ID]; exists {
+			return nil, fmt.Errorf("duplicate Text customer property definition %q", definition.ID)
+		}
+
+		definitionNames[definition.ID] = name
+	}
+
+	properties := make(map[string]string)
+	for definitionID, property := range values {
+		textProperty, exists := definitionNames[definitionID]
+		if !exists {
+			continue
+		}
+
+		hubSpotProperty, mapped := mapping[textProperty]
+		if !mapped {
+			continue
+		}
+
+		value, ok, err := propertyValue(property.Value)
+		if err != nil {
+			return nil, fmt.Errorf("decode Text customer property %q: %w", textProperty, err)
+		}
+		if !ok {
+			continue
+		}
+
+		if _, exists := properties[hubSpotProperty]; exists {
+			return nil, fmt.Errorf("duplicate HubSpot property mapping %q", hubSpotProperty)
+		}
+
+		properties[hubSpotProperty] = value
+	}
+
+	return properties, nil
+}
+
+func propertyValue(raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", false, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", false, err
+	}
+
+	switch value := value.(type) {
+	case string:
+		value = strings.TrimSpace(value)
+		return value, value != "", nil
+	case bool:
+		return fmt.Sprintf("%t", value), true, nil
+	case json.Number:
+		return value.String(), true, nil
+	default:
+		return "", false, fmt.Errorf("unsupported value type %T", value)
+	}
 }
 
 func splitName(name string) (string, string) {
