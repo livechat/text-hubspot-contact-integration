@@ -12,6 +12,7 @@ Text chat_deactivated webhook
   -> immediate 204 response
   -> Text get_chat, request_thread_summary, and poll get_chat
   -> Text get_customer
+  -> Text CDP get_customer custom fields
   -> HubSpot find/create/update contact by email
   -> HubSpot Note associated with the contact
 ```
@@ -95,6 +96,47 @@ This flow does not require the `chats.auto_summary_enabled` license property bec
 
 The immediate acknowledgement intentionally favors a working local blueprint over durable delivery. If the service stops or a provider call fails after the `204`, the current sync is lost; see [docs/edge-cases.md](docs/edge-cases.md) for the production design.
 
+## Custom Contact Properties
+
+For every customer with an email, the service calls Text Customer Data Platform `get_customer` and `get_customer_properties_definitions`. It resolves each customer-property definition ID to its Text property name, then checks `TEXT_TO_HUBSPOT_PROPERTY_MAP` for a HubSpot target property. Unmapped Text properties are skipped.
+
+Create each target property manually in HubSpot under **Settings → Data Management → Properties → Contact properties**. The mapping value is the HubSpot property's exact internal name, not its display label.
+
+```dotenv
+TEXT_TO_HUBSPOT_PROPERTY_MAP='{
+  "Plan": "text_plan",
+  "Account ID": "text_account_id"
+}'
+```
+
+For example, these CDP responses:
+
+```json
+{
+  "customer_properties": {
+    "9b1c9e0a-3a4b-4f0e-9b6f-1f6c8a2b0d11": {
+      "value": "enterprise"
+    }
+  }
+}
+```
+
+```json
+{
+  "properties": [
+    {
+      "id": "9b1c9e0a-3a4b-4f0e-9b6f-1f6c8a2b0d11",
+      "name": "Plan",
+      "type": "string"
+    }
+  ]
+}
+```
+
+update the HubSpot contact property `text_plan` to `enterprise`. HubSpot properties must already exist and be writable. Configure each HubSpot type to accept the mapped Text value: string/link to string, number to number, bool to boolean checkbox, and timestamp to date or datetime. Text properties mapped to `email`, `firstname`, or `lastname` cannot overwrite the built-in contact values managed by this guide.
+
+The guide does not forward CDP `custom_fields`. The observed values can be encoded application data, such as `ai-engines:prechat`, rather than stable CRM property names.
+
 
 ## Configuration
 
@@ -103,6 +145,7 @@ The immediate acknowledgement intentionally favors a working local blueprint ove
 | `TEXT_BASIC_AUTH` | Yes | Base64-encoded `account_id:personal_access_token` for the Text APIs. |
 | `TEXT_WEBHOOK_SECRET` | Yes | Shared secret checked on every webhook delivery. |
 | `HUBSPOT_ACCESS_TOKEN` | Yes | HubSpot private app access token. |
+| `TEXT_TO_HUBSPOT_PROPERTY_MAP` | No | JSON map from a Text customer-property name to a manually created HubSpot contact-property internal name. Unmapped Text properties are skipped. |
 | `TEXT_OWNER_CLIENT_ID` | Registration only | Client ID used by Text when registering the webhook. |
 | `WEBHOOK_PUBLIC_URL` | Registration only | Public HTTPS base URL, without a trailing slash. |
 | `HOST_PORT` | No | Docker host port; defaults to `8080`. |
@@ -114,6 +157,7 @@ The code intentionally uses small direct HTTP clients rather than provider SDKs:
 - Text `get_chat` retrieves the closed thread and its stored summary, if any.
 - Text `request_thread_summary` starts asynchronous generation for a closed thread, then the service polls the same explicit thread until it is stored.
 - Text `get_customer` retrieves the customer's email and name.
+- Text Customer Data Platform `get_customer` and `get_customer_properties_definitions` resolve configured customer-property mappings for HubSpot contact updates.
 - HubSpot reads a contact by email, creates it when absent, or updates non-empty name fields when found.
 - HubSpot creates a Note with `hs_note_body` and `hs_timestamp`, associating it to the contact inline with association type `202`.
 
@@ -137,5 +181,8 @@ This is deliberately a minimal guide. See [docs/edge-cases.md](docs/edge-cases.m
 - [Text Configuration API](https://developers.livechat.com/docs/management/configuration-api/)
 - [Text Webhooks](https://developers.livechat.com/docs/management/webhooks/)
 - [Text Personal Access Tokens](https://developers.livechat.com/docs/authorization/personal-access-tokens/)
+- [Text CDP Get Customer](https://www.text.com/docs/api/customer-data-platform/customers/get-customer)
+- [Text CDP Customer Property Definitions](https://www.text.com/docs/api/customer-data-platform/customer-properties/list-customer-property-definitions)
 - [HubSpot Contacts API](https://developers.hubspot.com/docs/api-reference/latest/crm/objects/contacts/guide)
+- [HubSpot Contact Properties](https://knowledge.hubspot.com/properties/create-and-edit-properties)
 - [HubSpot Notes API](https://developers.hubspot.com/docs/api-reference/latest/crm/activities/notes/guide)

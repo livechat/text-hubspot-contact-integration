@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,9 +34,10 @@ func (error APIError) Error() string {
 }
 
 type ContactInput struct {
-	Email     string
-	FirstName string
-	LastName  string
+	Email            string
+	FirstName        string
+	LastName         string
+	CustomProperties map[string]string
 }
 
 type contactResponse struct {
@@ -89,12 +91,14 @@ func (client *Client) CreateNote(ctx context.Context, contactID, body string, ti
 
 func (client *Client) findContactByEmail(ctx context.Context, email string) (string, error) {
 	path := "/crm/objects/2026-03/contacts/" + url.PathEscape(email) + "?idProperty=email&properties=email,firstname,lastname"
+
 	var response contactResponse
 	if err := client.call(ctx, http.MethodGet, path, nil, &response); err != nil {
 		var apiError APIError
 		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusNotFound {
 			return "", errContactNotFound
 		}
+
 		return "", fmt.Errorf("find contact by email: %w", err)
 	}
 
@@ -105,6 +109,7 @@ func (client *Client) createContact(ctx context.Context, input ContactInput) (st
 	payload := map[string]map[string]string{
 		"properties": contactProperties(input, true),
 	}
+
 	var response contactResponse
 	if err := client.call(ctx, http.MethodPost, "/crm/objects/2026-03/contacts", payload, &response); err != nil {
 		return "", fmt.Errorf("create contact: %w", err)
@@ -128,7 +133,10 @@ func (client *Client) updateContact(ctx context.Context, contactID string, input
 }
 
 func contactProperties(input ContactInput, includeEmail bool) map[string]string {
-	properties := make(map[string]string, 3)
+	properties := make(map[string]string, len(input.CustomProperties)+3)
+
+	maps.Copy(properties, input.CustomProperties)
+
 	if includeEmail {
 		properties["email"] = input.Email
 	}
@@ -149,6 +157,7 @@ func (client *Client) call(ctx context.Context, method, path string, payload any
 		if err != nil {
 			return fmt.Errorf("encode request: %w", err)
 		}
+
 		requestBody = bytes.NewReader(body)
 	}
 
@@ -156,6 +165,7 @@ func (client *Client) call(ctx context.Context, method, path string, payload any
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
+
 	request.Header.Set("Authorization", "Bearer "+client.accessToken)
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
@@ -167,7 +177,7 @@ func (client *Client) call(ctx context.Context, method, path string, payload any
 	}
 	defer response.Body.Close()
 
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}

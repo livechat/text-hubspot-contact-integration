@@ -38,6 +38,7 @@ type Chat struct {
 type Thread struct {
 	ID      string   `json:"id"`
 	Summary *Summary `json:"summary"`
+	Tags    []string `json:"tags"`
 }
 
 type Summary struct {

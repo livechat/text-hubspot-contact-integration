@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ type config struct {
 	textBasicAuth      string
 	webhookSecret      string
 	hubSpotAccessToken string
+	propertyMap        map[string]string
 }
 
 func main() {
@@ -37,7 +39,9 @@ func main() {
 
 	service := contactsync.New(
 		textapi.New(config.textBasicAuth),
+		textapi.NewCDP(config.textBasicAuth),
 		hubspot.New(config.hubSpotAccessToken),
+		config.propertyMap,
 	)
 
 	mux := http.NewServeMux()
@@ -84,11 +88,17 @@ func main() {
 }
 
 func loadConfig() (config, error) {
+	propertyMap, err := parsePropertyMap(os.Getenv("TEXT_TO_HUBSPOT_PROPERTY_MAP"))
+	if err != nil {
+		return config{}, err
+	}
+
 	settings := config{
 		port:               envOrDefault("PORT", "8080"),
 		textBasicAuth:      strings.TrimSpace(os.Getenv("TEXT_BASIC_AUTH")),
 		webhookSecret:      strings.TrimSpace(os.Getenv("TEXT_WEBHOOK_SECRET")),
 		hubSpotAccessToken: strings.TrimSpace(os.Getenv("HUBSPOT_ACCESS_TOKEN")),
+		propertyMap:        propertyMap,
 	}
 
 	for name, value := range map[string]string{
@@ -107,6 +117,41 @@ func loadConfig() (config, error) {
 	}
 
 	return settings, nil
+}
+
+func parsePropertyMap(value string) (map[string]string, error) {
+	mapping := make(map[string]string)
+
+	if strings.TrimSpace(value) == "" {
+		return mapping, nil
+	}
+
+	if err := json.Unmarshal([]byte(value), &mapping); err != nil {
+		return nil, fmt.Errorf("TEXT_TO_HUBSPOT_PROPERTY_MAP must be a JSON object: %w", err)
+	}
+
+	var (
+		normalized        = make(map[string]string, len(mapping))
+		hubSpotProperties = make(map[string]struct{}, len(mapping))
+	)
+
+	for textProperty, hubSpotProperty := range mapping {
+		textProperty = strings.TrimSpace(textProperty)
+		hubSpotProperty = strings.TrimSpace(hubSpotProperty)
+
+		if textProperty == "" || hubSpotProperty == "" {
+			return nil, fmt.Errorf("TEXT_TO_HUBSPOT_PROPERTY_MAP cannot contain empty property names")
+		}
+
+		if _, exists := hubSpotProperties[hubSpotProperty]; exists {
+			return nil, fmt.Errorf("TEXT_TO_HUBSPOT_PROPERTY_MAP maps multiple Text properties to HubSpot property %q", hubSpotProperty)
+		}
+
+		normalized[textProperty] = hubSpotProperty
+		hubSpotProperties[hubSpotProperty] = struct{}{}
+	}
+
+	return normalized, nil
 }
 
 func envOrDefault(name, fallback string) string {
